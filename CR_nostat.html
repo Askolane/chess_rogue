@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chess Roguelike - Classic + Heretic</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#1a1a2e;color:#eee;font-family:'Segoe UI',sans-serif;display:flex;justify-content:center;align-items:flex-start;min-height:100vh;padding:20px;gap:20px}
+.game{display:flex;gap:20px;flex-wrap:wrap;justify-content:center}
+.cell{width:56px;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;position:relative;cursor:pointer;transition:all .15s}
+.cell.light{background:#f0d9b5}
+.cell.dark{background:#b58863}
+.cell.move-highlight{background:#7ec87e!important}
+.cell.attack-highlight{background:#e06060!important}
+.cell.selected{box-shadow:inset 0 0 0 3px #ffd700;z-index:1}
+.cell.large-player{background:rgba(33,150,243,.25)!important;box-shadow:inset 0 0 8px rgba(33,150,243,.4)}
+.cell.large-enemy{background:rgba(244,67,54,.25)!important;box-shadow:inset 0 0 8px rgba(244,67,54,.4)}
+.cell:hover{filter:brightness(1.1)}
+.unit{display:flex;flex-direction:column;align-items:center;gap:2px;pointer-events:none}
+.unit-icon{font-size:26px;line-height:1;text-shadow:1px 1px 2px rgba(0,0,0,.5)}
+.unit-icon.large{font-size:34px}
+.unit.player .unit-icon{color:#2196F3}
+.unit.enemy .unit-icon{color:#f44336}
+.unit-label{font-size:7px;font-weight:700;color:#fff;background:rgba(0,0,0,.6);padding:0 3px;border-radius:3px;white-space:nowrap}
+.panel{width:220px;display:flex;flex-direction:column;gap:12px}
+.panel-section{background:#16213e;border-radius:8px;padding:12px;border:1px solid #2a2a4a}
+.panel-title{font-size:13px;font-weight:700;color:#ffd700;margin-bottom:8px;text-transform:uppercase;letter-spacing:1px}
+.game-info{font-size:12px;color:#aaa;line-height:1.8}
+.game-info span{color:#ffd700;font-weight:600}
+.captured{display:flex;flex-wrap:wrap;gap:2px;margin-top:4px;min-height:24px}
+.captured span{font-size:16px}
+.log-area{width:100%;max-width:832px}
+.log{background:#16213e;border-radius:8px;padding:12px;border:1px solid #2a2a4a;max-height:180px;overflow-y:auto;font-size:11px;color:#888;line-height:1.6}
+.log .player-action{color:#4fc3f7}
+.log .enemy-action{color:#ef5350}
+.log .kill{color:#ffd700;font-weight:600}
+.log .merge{color:#ff6fff;font-weight:600}
+.log .system{color:#aaa}
+.status-bar{display:flex;align-items:center;justify-content:center;gap:12px;font-size:14px;color:#ffd700;padding:8px;background:#16213e;border-radius:8px;border:1px solid #2a2a4a;margin-bottom:4px}
+.btn{background:#ffd700;color:#1a1a2e;border:none;padding:6px 14px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer}
+.btn:hover{background:#ffe44d}
+.btn-pass{background:#666;color:#eee;font-size:11px;padding:5px 12px}
+.btn-pass:hover{background:#888}
+.btn-pass.hidden{display:none}
+.kill-flash{animation:flash .3s}
+@keyframes flash{0%{filter:brightness(1)}50%{filter:brightness(2)}100%{filter:brightness(1)}}
+.coord{position:absolute;font-size:8px;color:rgba(0,0,0,.3);pointer-events:none}
+.coord-col{bottom:1px;right:2px}
+.coord-row{top:1px;left:2px}
+</style>
+</head>
+<body>
+<div class="game">
+  <div>
+    <div class="status-bar">
+      <span id="status">🔵 아군 턴 — 기물을 선택하세요</span>
+      <button class="btn btn-pass hidden" id="passBtn" onclick="passAction()">⏭ 패스</button>
+    </div>
+    <div class="board" id="board"></div>
+  </div>
+  <div class="panel">
+    <div class="panel-section">
+      <div class="panel-title">📊 게임 정보</div>
+      <div class="game-info" id="gameInfo"></div>
+    </div>
+    <div class="panel-section">
+      <div class="panel-title">💀 잡은 기물</div>
+      <div class="captured" id="capturedEnemy"></div>
+      <div class="panel-title" style="margin-top:8px">😵 잃은 기물</div>
+      <div class="captured" id="capturedPlayer"></div>
+    </div>
+    <div class="panel-section" style="text-align:center">
+      <button class="btn" onclick="initGame()">🔄 재시작</button>
+    </div>
+  </div>
+  <div class="log-area">
+    <div class="panel-section">
+      <div class="panel-title">📜 행동 로그</div>
+      <div class="log" id="log"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const BOARD_SIZE = 10;
+const COLS = 'abcdefghijklmnop'.slice(0, BOARD_SIZE);
+const BS = BOARD_SIZE;
+
+const TYPES = {
+  SWORD_PAWN:  { name:'칼 폰',   icon:'⚔️', move:'pawn',   value:1 },
+  SHIELD_PAWN: { name:'방패 폰', icon:'🛡️', move:'pawn',   value:1 },
+  KNIGHT:      { name:'나이트',  icon:'🐴', move:'knight', value:3 },
+  BISHOP:      { name:'비숍',   icon:'⛪', move:'bishop', value:3 },
+  ROOK:        { name:'룩',     icon:'🏰', move:'rook',   value:4 },
+  KING:        { name:'킹',     icon:'👑', move:'king',   value:99 },
+  QUEEN:       { name:'퀸',     icon:'💎', move:'queen',  value:9 },
+
+  HERETIC_PAWN:   { name:'이교도 폰',   icon:'🔮', move:'pawn',   value:1 },
+  HERETIC_KNIGHT: { name:'이교도 나이트', icon:'🦇', move:'knight', value:3, onKill:'spawnHereticPawn' },
+  HERETIC_BISHOP: { name:'이교도 비숍',  icon:'🕯️', move:'bishop', value:3, onKill:'spawnHereticPawn' },
+
+  COLOSSUS: { name:'거신병', icon:'👿', move:'rook', value:20, size:2, onKill:'crush' },
+
+  DARK_PAWN:   { name:'암흑 폰',   icon:'⬛', move:'pawn',   value:1 },
+  DARK_KNIGHT: { name:'암흑 나이트', icon:'🐎', move:'knight', value:3 },
+  DARK_BISHOP: { name:'암흑 비숍',  icon:'🦉', move:'bishop', value:3 },
+  DARK_ROOK:   { name:'암흑 룩',   icon:'🗼', move:'rook',   value:4 },
+  DARK_QUEEN:  { name:'암흑 퀸',   icon:'🖤', move:'queen',  value:9 },
+  DARK_KING:   { name:'암흑 킹',   icon:'💀', move:'king',   value:99 },
+};
+
+const MERGE_RULES = [
+  { sources:['HERETIC_PAWN','HERETIC_PAWN','HERETIC_PAWN','HERETIC_PAWN'], result:'COLOSSUS' },
+];
+
+const PLAYER_SETUP = [
+  {type:'ROOK',row:0,col:0},{type:'KNIGHT',row:0,col:1},{type:'HERETIC_BISHOP',row:0,col:2},
+  {type:'BISHOP',row:0,col:3},{type:'HERETIC_PAWN',row:0,col:4},{type:'KING',row:0,col:5},
+  {type:'HERETIC_KNIGHT',row:0,col:6},{type:'QUEEN',row:0,col:7},
+  {type:'HERETIC_BISHOP',row:0,col:8},{type:'ROOK',row:0,col:9},
+  {type:'SHIELD_PAWN',row:1,col:0},{type:'SWORD_PAWN',row:1,col:1},{type:'SWORD_PAWN',row:1,col:2},
+  {type:'HERETIC_PAWN',row:1,col:3},{type:'HERETIC_PAWN',row:1,col:5},
+  {type:'HERETIC_PAWN',row:1,col:6},{type:'HERETIC_PAWN',row:1,col:7},
+  {type:'SHIELD_PAWN',row:1,col:8},{type:'SHIELD_PAWN',row:1,col:9},
+  {type:'HERETIC_PAWN',row:2,col:3},{type:'HERETIC_PAWN',row:2,col:4},
+];
+
+const ENEMY_SETUP = [
+  {type:'DARK_ROOK',row:9,col:0},{type:'DARK_KNIGHT',row:9,col:1},{type:'DARK_BISHOP',row:9,col:2},
+  {type:'DARK_QUEEN',row:9,col:4},{type:'DARK_KING',row:9,col:5},
+  {type:'DARK_BISHOP',row:9,col:7},{type:'DARK_KNIGHT',row:9,col:8},{type:'DARK_ROOK',row:9,col:9},
+  {type:'DARK_PAWN',row:8,col:0},{type:'DARK_PAWN',row:8,col:1},{type:'DARK_PAWN',row:8,col:2},
+  {type:'DARK_PAWN',row:8,col:3},{type:'DARK_PAWN',row:8,col:4},{type:'DARK_PAWN',row:8,col:5},
+  {type:'DARK_PAWN',row:8,col:6},{type:'DARK_PAWN',row:8,col:7},{type:'DARK_PAWN',row:8,col:8},
+  {type:'DARK_PAWN',row:8,col:9},
+];
+
+// ── 엔진 ──
+let board, units, phase, selUnit, highlights, turn, capturedByPlayer, capturedByEnemy;
+
+function makeUnit(type,team,row,col){
+  const t=TYPES[type];if(!t)return null;
+  return{id:Math.random().toString(36).slice(2,8),type,team,row,col,
+    name:t.name,icon:t.icon,moveType:t.move,value:t.value,
+    size:t.size||1,onKill:t.onKill||null,alive:true};
+}
+
+function placeOnBoard(u){for(let i=0;i<u.size;i++)for(let j=0;j<u.size;j++)board[u.row+i][u.col+j]=u;}
+function removeFromBoard(u){for(let r=0;r<BS;r++)for(let c=0;c<BS;c++)if(board[r][c]===u)board[r][c]=null;}
+function isAnchor(u,r,c){return u.row===r&&u.col===c;}
+
+function placeSetup(setup,team){
+  const fixed=setup.filter(s=>s.col!=='random'),random=setup.filter(s=>s.col==='random');
+  fixed.forEach(s=>{const u=makeUnit(s.type,team,s.row,s.col);if(u){units.push(u);placeOnBoard(u);}});
+  random.forEach(s=>{const e=[];for(let c=0;c<BS;c++)if(!board[s.row][c])e.push(c);if(!e.length)return;
+    const c=e[Math.floor(Math.random()*e.length)];const u=makeUnit(s.type,team,s.row,c);if(u){units.push(u);placeOnBoard(u);}});
+}
+
+function initGame(){
+  board=Array.from({length:BS},()=>Array(BS).fill(null));
+  units=[];turn='player';capturedByPlayer=[];capturedByEnemy=[];
+  document.getElementById('log').innerHTML='';
+  const b=document.getElementById('board');
+  b.style.cssText=`display:grid;grid-template-columns:repeat(${BS},56px);grid-template-rows:repeat(${BS},56px);border:3px solid #4a4a6a;border-radius:8px;overflow:hidden`;
+  placeSetup(PLAYER_SETUP,'player');placeSetup(ENEMY_SETUP,'enemy');
+  phase='selectUnit';selUnit=null;highlights={moves:[],attacks:[]};
+  render();setStatus('🔵 아군 턴 — 기물을 선택하세요');showPassBtn(true);
+  addLog('system','=== 게임 시작 ===');
+}
+
+// ── 행마법 ──
+function getValidMoves(u){return u.size>1?getMovesLarge(u):getMovesNormal(u);}
+function getValidAttacks(u){return u.size>1?getAttacksLarge(u):getAttacksNormal(u);}
+
+function getMovesNormal(u){
+  const m=[],{row,col,team}=u,dir=team==='player'?1:-1,mt=u.moveType;
+  switch(mt){
+    case'pawn':{const f=row+dir;if(ib(f,col)&&!board[f][col]){m.push({r:f,c:col});
+      const sr=team==='player'?1:BS-2;if(row===sr){const f2=row+dir*2;if(ib(f2,col)&&!board[f2][col])m.push({r:f2,c:col});}}break;}
+    case'knight':{[[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]].forEach(([dr,dc])=>{
+      const r=row+dr,c=col+dc;if(ib(r,c)&&!board[r][c])m.push({r,c});});break;}
+    case'rook':addLM(m,u,[[0,1],[0,-1],[1,0],[-1,0]]);break;
+    case'bishop':addLM(m,u,[[1,1],[1,-1],[-1,1],[-1,-1]]);break;
+    case'queen':addLM(m,u,[[0,1],[0,-1],[1,0],[-1,0],[1,1],[1,-1],[-1,1],[-1,-1]]);break;
+    case'king':{for(let dr=-1;dr<=1;dr++)for(let dc=-1;dc<=1;dc++){if(!dr&&!dc)continue;
+      const r=row+dr,c=col+dc;if(ib(r,c)&&!board[r][c])m.push({r,c});}break;}
+  }return m;
+}
+function getAttacksNormal(u){
+  const a=[],{row,col,team}=u,dir=team==='player'?1:-1,mt=u.moveType;
+  switch(mt){
+    case'pawn':{[[-1,1],[1,1]].forEach(([dc,dd])=>{const r=row+dir*dd,c=col+dc;
+      if(ib(r,c)&&board[r][c]&&board[r][c].team!==team)a.push({r,c});});break;}
+    case'knight':{[[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]].forEach(([dr,dc])=>{
+      const r=row+dr,c=col+dc;if(ib(r,c)&&board[r][c]&&board[r][c].team!==team)a.push({r,c});});break;}
+    case'rook':addLA(a,u,[[0,1],[0,-1],[1,0],[-1,0]]);break;
+    case'bishop':addLA(a,u,[[1,1],[1,-1],[-1,1],[-1,-1]]);break;
+    case'queen':addLA(a,u,[[0,1],[0,-1],[1,0],[-1,0],[1,1],[1,-1],[-1,1],[-1,-1]]);break;
+    case'king':{for(let dr=-1;dr<=1;dr++)for(let dc=-1;dc<=1;dc++){if(!dr&&!dc)continue;
+      const r=row+dr,c=col+dc;if(ib(r,c)&&board[r][c]&&board[r][c].team!==team)a.push({r,c});}break;}
+  }return a;
+}
+
+// 2x2 슬라이드
+function getLargeDirs(u){
+  switch(u.moveType){
+    case'rook':return[[0,1],[0,-1],[1,0],[-1,0]];
+    case'bishop':return[[1,1],[1,-1],[-1,1],[-1,-1]];
+    case'queen':return[[0,1],[0,-1],[1,0],[-1,0],[1,1],[1,-1],[-1,1],[-1,-1]];
+    case'king':return[[0,1],[0,-1],[1,0],[-1,0],[1,1],[1,-1],[-1,1],[-1,-1]];
+    default:return[[0,1],[0,-1],[1,0],[-1,0]];
+  }
+}
+function isLargeKing(u){return u.moveType==='king';}
+
+function getMovesLarge(u){const m=[],s=u.size,dirs=getLargeDirs(u),one=isLargeKing(u);
+  dirs.forEach(([dr,dc])=>{let nr=u.row+dr,nc=u.col+dc;
+    while(true){let ok=true;for(let i=0;i<s&&ok;i++)for(let j=0;j<s&&ok;j++){
+      const r=nr+i,c=nc+j;if(!ib(r,c)){ok=false;}else if(board[r][c]&&board[r][c]!==u){ok=false;}}
+      if(!ok)break;m.push({r:nr,c:nc});if(one)break;nr+=dr;nc+=dc;}});return m;}
+
+function getAttacksLarge(u){const a=[],s=u.size,dirs=getLargeDirs(u),one=isLargeKing(u);
+  dirs.forEach(([dr,dc])=>{let nr=u.row+dr,nc=u.col+dc;
+    while(true){let oob=false;for(let i=0;i<s&&!oob;i++)for(let j=0;j<s&&!oob;j++)if(!ib(nr+i,nc+j))oob=true;
+      if(oob)break;let hasE=false,hasA=false;const enemies=[];
+      for(let i=0;i<s;i++)for(let j=0;j<s;j++){const r=nr+i,c=nc+j,t=board[r][c];
+        if(t&&t!==u){if(t.team!==u.team){hasE=true;if(!enemies.some(e=>e.r===r&&e.c===c))enemies.push({r,c});}else hasA=true;}}
+      if(hasA)break;if(hasE){enemies.forEach(e=>{if(!a.some(x=>x.r===e.r&&x.c===e.c))a.push(e);});break;}
+      if(one)break;nr+=dr;nc+=dc;}});return a;}
+
+function addLM(m,u,dirs){dirs.forEach(([dr,dc])=>{let r=u.row+dr,c=u.col+dc;while(ib(r,c)){if(board[r][c])break;m.push({r,c});r+=dr;c+=dc;}});}
+function addLA(a,u,dirs){dirs.forEach(([dr,dc])=>{let r=u.row+dr,c=u.col+dc;while(ib(r,c)){if(board[r][c]){if(board[r][c].team!==u.team)a.push({r,c});break;}r+=dr;c+=dc;}});}
+function ib(r,c){return r>=0&&r<BS&&c>=0&&c<BS;}
+function pos(r,c){return COLS[c]+(r+1);}
+
+// ── 행동 ──
+function doMove(u,r,c){const f=pos(u.row,u.col);removeFromBoard(u);u.row=r;u.col=c;placeOnBoard(u);
+  addLog(u.team==='player'?'player-action':'enemy-action',`${u.name} ${f} → ${pos(r,c)}`);}
+
+function doCapture(u,tr,tc){
+  const tgt=board[tr][tc];if(!tgt||tgt===u)return;
+  const oR=u.row,oC=u.col,from=pos(oR,oC);
+
+  // 타겟 제거
+  tgt.alive=false; removeFromBoard(tgt);
+  if(u.team==='player')capturedByPlayer.push(tgt.icon);else capturedByEnemy.push(tgt.icon);
+  addLog('kill',`${u.name}(${from}) → ${tgt.name}(${pos(tr,tc)}) 💀`);
+  flashCell(tr,tc);
+
+  // 이동
+  if(u.size===1){
+    removeFromBoard(u);u.row=tr;u.col=tc;placeOnBoard(u);
+  } else {
+    // 2x2: 타겟 방향으로 슬라이드
+    const s=u.size;
+    let dr=0,dc=0;
+    if(tr>=u.row+s)dr=1;else if(tr<u.row)dr=-1;
+    if(tc>=u.col+s)dc=1;else if(tc<u.col)dc=-1;
+    if(dr||dc){
+      removeFromBoard(u);
+      let safety=20;
+      while(safety-->0){if(tr>=u.row&&tr<u.row+s&&tc>=u.col&&tc<u.col+s)break;u.row+=dr;u.col+=dc;}
+      // 짓밟기: 이동 방향 앞쪽 2x2 즉사
+      if(u.onKill==='crush'){
+        let cr0,cc0;
+        if(dr===1)cr0=u.row+s;else if(dr===-1)cr0=u.row-s;else cr0=u.row;
+        if(dc===1)cc0=u.col+s;else if(dc===-1)cc0=u.col-s;else cc0=u.col;
+        for(let i=0;i<s;i++)for(let j=0;j<s;j++){
+          const cr=cr0+i,cc=cc0+j;if(!ib(cr,cc))continue;
+          const v=board[cr][cc];
+          if(v&&v!==u&&v.alive){
+            v.alive=false;removeFromBoard(v);
+            if(u.team==='player')capturedByPlayer.push(v.icon);else capturedByEnemy.push(v.icon);
+            addLog('kill',`⚡ 짓밟기! ${v.name}(${pos(cr,cc)}) 💀`);flashCell(cr,cc);
+          }
+        }
+      }
+      // 풋프린트 내 다른 유닛도 제거 (밟고 지나감)
+      for(let i=0;i<s;i++)for(let j=0;j<s;j++){
+        const cr=u.row+i,cc=u.col+j;if(!ib(cr,cc))continue;
+        const v=board[cr][cc];
+        if(v&&v!==u&&v.alive){
+          v.alive=false;removeFromBoard(v);
+          if(u.team==='player')capturedByPlayer.push(v.icon);else capturedByEnemy.push(v.icon);
+          addLog('kill',`⚡ 거신병 돌진! ${v.name}(${pos(cr,cc)}) 💀`);flashCell(cr,cc);
+        }
+      }
+      placeOnBoard(u);
+    }
+  }
+
+  // onKill: 이교도 소환
+  if(u.onKill==='spawnHereticPawn'&&u.size===1&&!board[oR][oC]){
+    const p=makeUnit('HERETIC_PAWN',u.team,oR,oC);units.push(p);placeOnBoard(p);
+    addLog('merge',`✨ 이교도 폰 소환! (${pos(oR,oC)})`);
+  }
+
+  // 합체 체크
+  checkMerge(u.team);
+}
+
+// ── 합체 ──
+function checkMerge(team){
+  for(const rule of MERGE_RULES){const st=rule.sources[0],cnt=rule.sources.length,si=Math.sqrt(cnt);
+    if(si!==Math.floor(si))continue;const s=Math.floor(si);
+    for(let r=0;r<=BS-s;r++)for(let c=0;c<=BS-s;c++){let ok=true;const found=[];
+      for(let i=0;i<s&&ok;i++)for(let j=0;j<s&&ok;j++){const u=board[r+i][c+j];
+        if(!u||u.type!==st||u.team!==team||!u.alive)ok=false;else found.push(u);}
+      if(!ok||found.length!==cnt)continue;
+      found.forEach(u=>{u.alive=false;removeFromBoard(u);});
+      const big=makeUnit(rule.result,team,r,c);units.push(big);placeOnBoard(big);
+      addLog('merge',`🔥 ${TYPES[st].name} ${cnt}체 합체! ${TYPES[rule.result].name} 소환!`);
+      for(let i=0;i<s;i++)for(let j=0;j<s;j++)flashCell(r+i,c+j);
+      return true;}}
+  return false;
+}
+
+// ── 턴 ──
+function passAction(){if(turn!=='player'||phase==='gameOver')return;
+  addLog('player-action','아군 턴 패스');endPlayerTurn();}
+function showPassBtn(s){document.getElementById('passBtn').classList.toggle('hidden',!s);}
+function endPlayerTurn(){if(checkGameOver())return;turn='enemy';phase='enemyTurn';selUnit=null;highlights={moves:[],attacks:[]};
+  showPassBtn(false);setStatus('🔴 적 턴...');render();setTimeout(doEnemyTurn,500);}
+function endEnemyTurn(){if(checkGameOver())return;turn='player';phase='selectUnit';selUnit=null;highlights={moves:[],attacks:[]};
+  showPassBtn(true);setStatus('🔵 아군 턴 — 기물을 선택하세요');render();}
+function checkGameOver(){
+  const pk=units.find(u=>u.team==='player'&&u.type==='KING'&&u.alive);
+  const ek=units.find(u=>u.team==='enemy'&&u.type==='DARK_KING'&&u.alive);
+  if(!pk){phase='gameOver';setStatus('💀 패배...');showPassBtn(false);render();return true;}
+  if(!ek){phase='gameOver';setStatus('🎉 승리!');showPassBtn(false);render();return true;}
+  return false;
+}
+
+// ── AI ──
+function doEnemyTurn(){
+  const enemies=units.filter(u=>u.team==='enemy'&&u.alive);
+  let bestAction=null,bestScore=-Infinity;
+  for(const e of enemies){const atks=getValidAttacks(e);
+    for(const a of atks){const tgt=board[a.r][a.c];if(!tgt)continue;
+      let score=tgt.value;if(tgt.type==='KING')score=9999;
+      // 거신병 잡기 가치 높임
+      if(tgt.type==='COLOSSUS')score=50;
+      if(score>bestScore){bestScore=score;bestAction={unit:e,type:'attack',r:a.r,c:a.c};}}}
+  if(!bestAction){const movable=enemies.filter(e=>getValidMoves(e).length>0);
+    if(movable.length){const e=movable[Math.floor(Math.random()*movable.length)];
+      const moves=getValidMoves(e);const pu=units.filter(u=>u.team==='player'&&u.alive);
+      let best=moves[0],bd=Infinity;moves.forEach(m=>{pu.forEach(p=>{
+        const d=Math.abs(m.r-p.row)+Math.abs(m.c-p.col);if(d<bd){bd=d;best=m;}});});
+      bestAction={unit:e,type:'move',r:best.r,c:best.c};}}
+  if(bestAction){if(bestAction.type==='attack')doCapture(bestAction.unit,bestAction.r,bestAction.c);
+    else doMove(bestAction.unit,bestAction.r,bestAction.c);}
+  else addLog('enemy-action','적 행동 불가 — 패스');
+  render();setTimeout(endEnemyTurn,300);
+}
+
+// ── 입력 ──
+function onCellClick(r,c){
+  if(phase==='gameOver'||turn!=='player')return;
+  if(phase==='selectUnit'){const u=board[r][c];
+    if(u&&u.team==='player'){const moves=getValidMoves(u),attacks=getValidAttacks(u);
+      if(!moves.length&&!attacks.length){setStatus(`${u.name}은 행동할 수 없습니다`);return;}
+      selUnit=u;
+      highlights={moves:u.size>1?expandHL(u,moves):moves, attacks, rawMoves:moves};
+      phase='selectAction';setStatus(`🔵 ${u.name} 선택됨`);render();}}
+  else if(phase==='selectAction'){const u=selUnit;
+    const isM=highlights.moves.some(m=>m.r===r&&m.c===c);
+    const isA=highlights.attacks.some(a=>a.r===r&&a.c===c);
+    if(isA){doCapture(u,r,c);selUnit=null;highlights={moves:[],attacks:[]};render();setTimeout(endPlayerTurn,300);}
+    else if(isM){const anc=findAnc(highlights.moves,r,c);
+      doMove(u,anc.r,anc.c);selUnit=null;highlights={moves:[],attacks:[]};checkMerge(u.team);render();setTimeout(endPlayerTurn,300);}
+    else if(board[r][c]===u){selUnit=null;highlights={moves:[],attacks:[]};phase='selectUnit';
+      setStatus('🔵 아군 턴 — 기물을 선택하세요');render();}
+    else if(board[r][c]&&board[r][c].team==='player'){const nu=board[r][c];
+      const moves=getValidMoves(nu),attacks=getValidAttacks(nu);
+      if(!moves.length&&!attacks.length){setStatus(`${nu.name}은 행동할 수 없습니다`);return;}
+      selUnit=nu;highlights={moves:nu.size>1?expandHL(nu,moves):moves,attacks,rawMoves:moves};
+      setStatus(`🔵 ${nu.name} 선택됨`);render();}
+    else{selUnit=null;highlights={moves:[],attacks:[]};phase='selectUnit';
+      setStatus('🔵 아군 턴 — 기물을 선택하세요');render();}}
+}
+
+function expandHL(u,anchors){const ex=[];anchors.forEach(a=>{for(let i=0;i<u.size;i++)for(let j=0;j<u.size;j++){
+  const r=a.r+i,c=a.c+j;if(ib(r,c)&&!ex.some(e=>e.r===r&&e.c===c))ex.push({r,c,anchor:a});}});return ex;}
+function findAnc(list,r,c){const h=list.find(e=>e.r===r&&e.c===c);return h&&h.anchor?h.anchor:h;}
+
+// ── 렌더링 ──
+function render(){
+  const b=document.getElementById('board');b.innerHTML='';const r2=new Set();
+  for(let row=BS-1;row>=0;row--)for(let col=0;col<BS;col++){
+    const cell=document.createElement('div');cell.className='cell '+((row+col)%2===0?'dark':'light');
+    cell.onclick=()=>onCellClick(row,col);
+    if(highlights.moves.some(m=>m.r===row&&m.c===col))cell.classList.add('move-highlight');
+    if(highlights.attacks.some(a=>a.r===row&&a.c===col))cell.classList.add('attack-highlight');
+    if(selUnit&&selUnit.row===row&&selUnit.col===col)cell.classList.add('selected');
+    const u=board[row][col];
+    if(u&&u.size>1){cell.classList.add(u.team==='player'?'large-player':'large-enemy');
+      if(selUnit===u)cell.classList.add('selected');
+      if(isAnchor(u,row,col)&&!r2.has(u.id)){r2.add(u.id);
+        const ue=document.createElement('div');ue.className=`unit ${u.team}`;
+        const ie=document.createElement('div');ie.className='unit-icon large';ie.textContent=u.icon;
+        const le=document.createElement('div');le.className='unit-label';le.textContent=u.name;
+        ue.appendChild(ie);ue.appendChild(le);cell.appendChild(ue);}}
+    else if(u){
+      const ue=document.createElement('div');ue.className=`unit ${u.team}`;
+      const ie=document.createElement('div');ie.className='unit-icon';ie.textContent=u.icon;
+      const le=document.createElement('div');le.className='unit-label';le.textContent=u.name;
+      ue.appendChild(ie);ue.appendChild(le);cell.appendChild(ue);}
+    if(col===0){const rc=document.createElement('span');rc.className='coord coord-row';rc.textContent=row+1;cell.appendChild(rc);}
+    if(row===0){const cc=document.createElement('span');cc.className='coord coord-col';cc.textContent=COLS[col];cell.appendChild(cc);}
+    b.appendChild(cell);}
+  renderGI();
+}
+
+function renderGI(){
+  const pa=units.filter(u=>u.team==='player'&&u.alive).length;
+  const ea=units.filter(u=>u.team==='enemy'&&u.alive).length;
+  const col=units.find(u=>u.type==='COLOSSUS'&&u.alive);
+  document.getElementById('gameInfo').innerHTML=
+    `턴: <span>${turn==='player'?'아군':'적군'}</span><br>아군: <span>${pa}</span> | 적군: <span>${ea}</span>`+
+    (col?'<br>거신병: <span>소환됨!</span>':'');
+  document.getElementById('capturedEnemy').innerHTML=capturedByPlayer.map(i=>`<span>${i}</span>`).join('');
+  document.getElementById('capturedPlayer').innerHTML=capturedByEnemy.map(i=>`<span>${i}</span>`).join('');
+}
+
+function setStatus(t){document.getElementById('status').textContent=t;}
+function addLog(cls,text){const el=document.getElementById('log'),d=document.createElement('div');d.className=cls;d.textContent=text;el.appendChild(d);el.scrollTop=el.scrollHeight;}
+function flashCell(r,c){const b=document.getElementById('board'),idx=(BS-1-r)*BS+c,cell=b.children[idx];
+  if(cell){cell.classList.add('kill-flash');setTimeout(()=>cell.classList.remove('kill-flash'),300);}}
+
+initGame();
+</script>
+</body>
+</html>

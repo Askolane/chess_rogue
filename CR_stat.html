@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chess Roguelike Prototype v2</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#1a1a2e;color:#eee;font-family:'Segoe UI',sans-serif;display:flex;justify-content:center;align-items:flex-start;min-height:100vh;padding:20px;gap:20px}
+.game{display:flex;gap:20px;flex-wrap:wrap;justify-content:center}
+.board-wrap{position:relative}
+.cell{width:56px;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;position:relative;cursor:pointer;transition:all .15s}
+.cell.light{background:#f0d9b5}
+.cell.dark{background:#b58863}
+.cell.move-highlight{background:#7ec87e!important;cursor:pointer}
+.cell.attack-highlight{background:#e06060!important;cursor:pointer}
+.cell.selected{box-shadow:inset 0 0 0 3px #ffd700;z-index:1}
+.cell.current-turn{box-shadow:inset 0 0 0 3px #00d4ff;z-index:1}
+.cell.large-player{background:rgba(33,150,243,.25)!important;box-shadow:inset 0 0 8px rgba(33,150,243,.4)}
+.cell.large-enemy{background:rgba(244,67,54,.25)!important;box-shadow:inset 0 0 8px rgba(244,67,54,.4)}
+.cell:hover{filter:brightness(1.1)}
+.unit{display:flex;flex-direction:column;align-items:center;gap:1px;pointer-events:none}
+.unit-icon{font-size:24px;line-height:1;text-shadow:1px 1px 2px rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;min-height:28px}
+.unit-icon.large{font-size:32px;min-height:36px}
+.unit.player .unit-icon{color:#2196F3}
+.unit.enemy .unit-icon{color:#f44336}
+.unit-label{font-size:7px;font-weight:700;color:#fff;background:rgba(0,0,0,.6);padding:0 3px;border-radius:3px;white-space:nowrap;max-width:54px;overflow:hidden;text-overflow:ellipsis}
+.hp-bar{width:36px;height:3px;background:rgba(0,0,0,.4);border-radius:2px;overflow:hidden;margin-top:1px}
+.hp-fill{height:100%;border-radius:2px;transition:width .3s}
+.hp-fill.player{background:#4fc3f7}
+.hp-fill.enemy{background:#ef5350}
+.panel{width:220px;display:flex;flex-direction:column;gap:12px}
+.panel-section{background:#16213e;border-radius:8px;padding:12px;border:1px solid #2a2a4a}
+.panel-title{font-size:13px;font-weight:700;color:#ffd700;margin-bottom:8px;text-transform:uppercase;letter-spacing:1px}
+.turn-list{display:flex;flex-direction:column;gap:3px;max-height:500px;overflow-y:auto}
+.turn-item{display:flex;align-items:center;gap:6px;padding:3px 6px;border-radius:4px;font-size:10px;background:rgba(255,255,255,.03);border:1px solid transparent;transition:all .15s}
+.turn-item.active{background:rgba(255,215,0,.15);border-color:#ffd700}
+.turn-item.dead{opacity:.3;text-decoration:line-through}
+.turn-item .dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.turn-item .dot.player{background:#4fc3f7}
+.turn-item .dot.enemy{background:#ef5350}
+.turn-item .stats{color:#888;margin-left:auto;font-size:9px}
+.game-info{font-size:12px;color:#aaa;line-height:1.8}
+.game-info span{color:#ffd700;font-weight:600}
+.log-area{width:100%;max-width:832px}
+.log{background:#16213e;border-radius:8px;padding:12px;border:1px solid #2a2a4a;max-height:180px;overflow-y:auto;font-size:11px;color:#888;line-height:1.6}
+.log .player-action{color:#4fc3f7}
+.log .enemy-action{color:#ef5350}
+.log .kill{color:#ffd700;font-weight:600}
+.log .merge{color:#ff6fff;font-weight:600}
+.log .system{color:#aaa}
+.status-bar{display:flex;align-items:center;justify-content:center;gap:12px;font-size:14px;color:#ffd700;padding:8px;background:#16213e;border-radius:8px;border:1px solid #2a2a4a;margin-bottom:4px}
+.btn{background:#ffd700;color:#1a1a2e;border:none;padding:6px 14px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;transition:all .15s}
+.btn:hover{background:#ffe44d;transform:scale(1.02)}
+.btn-pass{background:#666;color:#eee;font-size:11px;padding:5px 12px}
+.btn-pass:hover{background:#888}
+.btn-pass.hidden{display:none}
+.dmg-popup{position:absolute;font-size:16px;font-weight:900;color:#ff4444;pointer-events:none;z-index:100;animation:dmgUp .8s ease-out forwards;text-shadow:0 0 4px rgba(0,0,0,.8)}
+.dmg-popup.crush{color:#ff8800;font-size:13px}
+@keyframes dmgUp{0%{opacity:1;transform:translateY(0)}100%{opacity:0;transform:translateY(-40px)}}
+.kill-flash{animation:flash .3s}
+@keyframes flash{0%{filter:brightness(1)}50%{filter:brightness(2)}100%{filter:brightness(1)}}
+.coord{position:absolute;font-size:8px;color:rgba(0,0,0,.3);pointer-events:none}
+.coord-col{bottom:1px;right:2px}
+.coord-row{top:1px;left:2px}
+</style>
+</head>
+<body>
+<div class="game">
+  <div>
+    <div class="status-bar">
+      <span id="status">⚔️ 유닛을 선택하세요</span>
+      <button class="btn btn-pass hidden" id="passBtn" onclick="passAction()">⏭ 패스</button>
+    </div>
+    <div class="board-wrap">
+      <div class="board" id="board"></div>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-section">
+      <div class="panel-title">⏱ 행동 순서</div>
+      <div class="turn-list" id="turnList"></div>
+    </div>
+    <div class="panel-section">
+      <div class="panel-title">📊 게임 정보</div>
+      <div class="game-info" id="gameInfo"></div>
+    </div>
+    <div class="panel-section" style="text-align:center">
+      <button class="btn" onclick="initGame()">🔄 재시작</button>
+    </div>
+  </div>
+  <div class="log-area">
+    <div class="panel-section">
+      <div class="panel-title">📜 행동 로그</div>
+      <div class="log" id="log"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ╔══════════════════════════════════════════════════════╗
+// ║                  ✏️ 설정 영역                        ║
+// ╚══════════════════════════════════════════════════════╝
+
+const BOARD_SIZE = 10;  // 보드 크기 (8, 10, 12 등)
+const COLS = 'abcdefghijklmnop'.slice(0, BOARD_SIZE);
+
+const TYPES = {
+  // ── 아군 기본 유닛 ──
+  SWORD_PAWN:  { name:'칼 폰',   icon:'⚔️', atk:2, hp:1, spd:0, move:'pawn',   value:1 },
+  SHIELD_PAWN: { name:'방패 폰', icon:'🛡️', atk:1, hp:2, spd:0, move:'pawn',   value:1 },
+  KNIGHT:      { name:'나이트',  icon:'🐴', atk:2, hp:2, spd:1, move:'knight', value:3 },
+  BISHOP:      { name:'비숍',   icon:'⛪', atk:2, hp:1, spd:1, move:'bishop', value:3 },
+  ROOK:        { name:'룩',     icon:'🏰', atk:2, hp:3, spd:0, move:'rook',   value:4 },
+  KING:        { name:'킹',     icon:'👑', atk:1, hp:5, spd:2, move:'king',   value:99 },
+  QUEEN:       { name:'퀸',     icon:'💎', atk:3, hp:3, spd:3, move:'queen',  value:9 },
+
+  // ── 이교도 유닛 ──
+  HERETIC_PAWN:   { name:'이교도 폰',   icon:'🔮', atk:1, hp:1, spd:0, move:'pawn',   value:1 },
+  HERETIC_KNIGHT: { name:'이교도 나이트', icon:'🦇', atk:1, hp:1, spd:0, move:'knight', value:3,
+                    onKill:'spawnHereticPawn' },
+  HERETIC_BISHOP: { name:'이교도 비숍',  icon:'🕯️', atk:1, hp:1, spd:0, move:'bishop', value:3,
+                    onKill:'spawnHereticPawn' },
+
+  // ── 거신병 (합체 전용) ──
+  COLOSSUS: { name:'거신병', icon:'👿', atk:5, hp:5, spd:5, move:'rook', value:20,
+              size:2, onKill:'crush' },
+
+  // ── 적 전용 유닛 ──
+  DARK_PAWN:   { name:'암흑 폰',   icon:'⬛', atk:1, hp:2, spd:0, move:'pawn',   value:1 },
+  DARK_KNIGHT: { name:'암흑 나이트', icon:'🐎', atk:2, hp:2, spd:1, move:'knight', value:3 },
+  DARK_BISHOP: { name:'암흑 비숍',  icon:'🦉', atk:2, hp:2, spd:1, move:'bishop', value:3 },
+  DARK_ROOK:   { name:'암흑 룩',   icon:'🗼', atk:2, hp:4, spd:0, move:'rook',   value:4 },
+  DARK_QUEEN:  { name:'암흑 퀸',   icon:'🖤', atk:3, hp:4, spd:2, move:'queen',  value:9 },
+  DARK_KING:   { name:'암흑 킹',   icon:'💀', atk:1, hp:6, spd:2, move:'king',   value:99 },
+};
+
+const MERGE_RULES = [
+  { sources: ['HERETIC_PAWN','HERETIC_PAWN','HERETIC_PAWN','HERETIC_PAWN'], result: 'COLOSSUS' },
+];
+
+// 좌표: row 0=아래, row 9=위, col 0=a, col 9=j
+const PLAYER_SETUP = [
+  // 뒷줄 (row 0)
+  { type:'ROOK',           row:0, col:0 },
+  { type:'KNIGHT',         row:0, col:1 },
+  { type:'HERETIC_BISHOP', row:0, col:2 },
+  { type:'BISHOP',         row:0, col:3 },
+  { type:'HERETIC_PAWN',   row:0, col:4 },  // ← 이걸 e2로 전진시키면 합체!
+  { type:'KING',           row:0, col:5 },
+  { type:'HERETIC_KNIGHT', row:0, col:6 },
+  { type:'QUEEN',          row:0, col:7 },
+  { type:'HERETIC_BISHOP', row:0, col:8 },
+  { type:'ROOK',           row:0, col:9 },
+  // 앞줄 (row 1) — e2에 이교도 폰, f2에도
+  { type:'SHIELD_PAWN',    row:1, col:0 },
+  { type:'SWORD_PAWN',     row:1, col:1 },
+  { type:'SWORD_PAWN',     row:1, col:2 },
+  { type:'HERETIC_PAWN',   row:1, col:3 },  // d2 이교도 폰
+  { type:'HERETIC_PAWN',   row:1, col:5 },  // f2 이교도 폰
+  { type:'HERETIC_PAWN',   row:1, col:6 },
+  { type:'HERETIC_PAWN',   row:1, col:7 },
+  { type:'SHIELD_PAWN',    row:1, col:8 },
+  { type:'SHIELD_PAWN',    row:1, col:9 },
+  // 전진 배치 (row 2) — ㄱ자 3개, e1 폰이 e2로 오면 2x2 완성
+  { type:'HERETIC_PAWN',   row:2, col:3 },  // d3 이교도 폰
+  { type:'HERETIC_PAWN',   row:2, col:4 },  // e3 이교도 폰
+  // → e1 이교도 폰을 e2(row1,col4)로 전진 → d2,d3,e2,e3 = 2x2 합체!
+];
+
+const ENEMY_SETUP = [
+  // 뒷줄 (row 9)
+  { type:'DARK_ROOK',   row:9, col:0 },
+  { type:'DARK_KNIGHT', row:9, col:1 },
+  { type:'DARK_BISHOP', row:9, col:2 },
+  { type:'DARK_QUEEN',  row:9, col:4 },
+  { type:'DARK_KING',   row:9, col:5 },
+  { type:'DARK_BISHOP', row:9, col:7 },
+  { type:'DARK_KNIGHT', row:9, col:8 },
+  { type:'DARK_ROOK',   row:9, col:9 },
+  // 앞줄 (row 8)
+  { type:'DARK_PAWN', row:8, col:0 },
+  { type:'DARK_PAWN', row:8, col:1 },
+  { type:'DARK_PAWN', row:8, col:2 },
+  { type:'DARK_PAWN', row:8, col:3 },
+  { type:'DARK_PAWN', row:8, col:4 },
+  { type:'DARK_PAWN', row:8, col:5 },
+  { type:'DARK_PAWN', row:8, col:6 },
+  { type:'DARK_PAWN', row:8, col:7 },
+  { type:'DARK_PAWN', row:8, col:8 },
+  { type:'DARK_PAWN', row:8, col:9 },
+];
+
+// ╔══════════════════════════════════════════════════════╗
+// ║                    ⚙️ 게임 엔진                      ║
+// ╚══════════════════════════════════════════════════════╝
+
+let board, units, turnQueue, turnIdx, phase, selUnit, highlights, round;
+const BS = BOARD_SIZE;
+
+function makeUnit(type,team,row,col) {
+  const t=TYPES[type]; if(!t){console.error(`알 수 없는 유닛: ${type}`);return null;}
+  return{id:Math.random().toString(36).slice(2,8),type,team,row,col,
+    hp:t.hp,maxHp:t.hp,atk:t.atk,spd:t.spd,name:t.name,icon:t.icon,
+    moveType:t.move,value:t.value,size:t.size||1,onKill:t.onKill||null,alive:true};
+}
+
+function placeOnBoard(u){for(let i=0;i<u.size;i++)for(let j=0;j<u.size;j++)board[u.row+i][u.col+j]=u;}
+function removeFromBoard(u){for(let r=0;r<BS;r++)for(let c=0;c<BS;c++)if(board[r][c]===u)board[r][c]=null;}
+function isAnchor(u,r,c){return u.row===r&&u.col===c;}
+
+function placeSetup(setup,team) {
+  const fixed=setup.filter(s=>s.col!=='random'), random=setup.filter(s=>s.col==='random');
+  fixed.forEach(s=>{const u=makeUnit(s.type,team,s.row,s.col);if(u){units.push(u);placeOnBoard(u);}});
+  random.forEach(s=>{const e=[];for(let c=0;c<BS;c++)if(!board[s.row][c])e.push(c);if(!e.length)return;
+    const c=e[Math.floor(Math.random()*e.length)];
+    const u=makeUnit(s.type,team,s.row,c);if(u){units.push(u);placeOnBoard(u);}});
+}
+
+function initGame() {
+  board=Array.from({length:BS},()=>Array(BS).fill(null));
+  units=[];round=1;
+  document.getElementById('log').innerHTML='';
+  // 보드 CSS 동적 설정
+  const boardEl=document.getElementById('board');
+  boardEl.style.gridTemplateColumns=`repeat(${BS},56px)`;
+  boardEl.style.gridTemplateRows=`repeat(${BS},56px)`;
+  boardEl.style.border='3px solid #4a4a6a';
+  boardEl.style.borderRadius='8px';
+  boardEl.style.overflow='hidden';
+  boardEl.style.display='grid';
+  placeSetup(PLAYER_SETUP,'player');
+  placeSetup(ENEMY_SETUP,'enemy');
+  buildTurnQueue();turnIdx=0;phase='idle';selUnit=null;highlights={moves:[],attacks:[]};
+  render();addLog('system',`=== 라운드 ${round} 시작 ===`);startTurn();
+}
+
+function buildTurnQueue(){turnQueue=units.filter(u=>u.alive).sort((a,b)=>{if(b.spd!==a.spd)return b.spd-a.spd;return a.team==='player'?-1:1;});}
+function currentUnit(){return turnQueue[turnIdx];}
+
+function startTurn() {
+  while(turnIdx<turnQueue.length&&!turnQueue[turnIdx].alive)turnIdx++;
+  if(turnIdx>=turnQueue.length){newRound();return;}
+  const u=currentUnit(),moves=getValidMoves(u),attacks=getValidAttacks(u);
+  if(!moves.length&&!attacks.length){addLog(u.team==='player'?'player-action':'enemy-action',`${u.name} 행동 불가 — 자동 스킵`);turnIdx++;startTurn();return;}
+  selUnit=null;highlights={moves:[],attacks:[]};
+  if(u.team==='player'){phase='playerSelect';setStatus(`🔵 ${u.name}의 차례`);showPassBtn(true);}
+  else{phase='enemyTurn';setStatus(`🔴 적 ${u.name}의 차례...`);showPassBtn(false);render();setTimeout(()=>aiTurn(u),400);}
+  render();
+}
+
+function newRound(){round++;buildTurnQueue();turnIdx=0;addLog('system',`=== 라운드 ${round} 시작 ===`);startTurn();}
+function nextTurn(){if(checkGameOver())return;turnIdx++;startTurn();}
+function checkGameOver(){
+  const pk=units.find(u=>u.team==='player'&&u.type==='KING'&&u.alive);
+  const ek=units.find(u=>u.team==='enemy'&&u.type==='DARK_KING'&&u.alive);
+  if(!pk){phase='gameOver';setStatus('💀 패배...');showPassBtn(false);render();return true;}
+  if(!ek){phase='gameOver';setStatus('🎉 승리!');showPassBtn(false);render();return true;}
+  return false;
+}
+
+function passAction(){
+  if(phase!=='playerSelect'&&phase!=='playerAction')return;
+  addLog('player-action',`${currentUnit().name} 행동을 넘겼다`);
+  selUnit=null;highlights={moves:[],attacks:[]};showPassBtn(false);nextTurn();
+}
+function showPassBtn(s){document.getElementById('passBtn').classList.toggle('hidden',!s);}
+
+// ── 행마법 ──
+function getValidMoves(u){return u.size>1?getMovesLarge(u):getMovesNormal(u);}
+function getValidAttacks(u){return u.size>1?getAttacksLarge(u):getAttacksNormal(u);}
+
+function getMovesNormal(u) {
+  const m=[],{row,col,team}=u,dir=team==='player'?1:-1,mt=u.moveType;
+  if(typeof mt==='object')return getCustomMoves(u,false);
+  switch(mt){
+    case'pawn':{const f=row+dir;if(ib(f,col)&&!board[f][col]){m.push({r:f,c:col});
+      const sr=team==='player'?1:BS-2;if(row===sr){const f2=row+dir*2;if(ib(f2,col)&&!board[f2][col])m.push({r:f2,c:col});}}break;}
+    case'knight':{[[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]].forEach(([dr,dc])=>{
+      const r=row+dr,c=col+dc;if(ib(r,c)&&!board[r][c])m.push({r,c});});break;}
+    case'rook':addLM(m,u,[[0,1],[0,-1],[1,0],[-1,0]]);break;
+    case'bishop':addLM(m,u,[[1,1],[1,-1],[-1,1],[-1,-1]]);break;
+    case'queen':addLM(m,u,[[0,1],[0,-1],[1,0],[-1,0],[1,1],[1,-1],[-1,1],[-1,-1]]);break;
+    case'king':{for(let dr=-1;dr<=1;dr++)for(let dc=-1;dc<=1;dc++){if(!dr&&!dc)continue;
+      const r=row+dr,c=col+dc;if(ib(r,c)&&!board[r][c])m.push({r,c});}break;}
+  }return m;
+}
+function getAttacksNormal(u) {
+  const a=[],{row,col,team}=u,dir=team==='player'?1:-1,mt=u.moveType;
+  if(typeof mt==='object')return getCustomMoves(u,true);
+  switch(mt){
+    case'pawn':{[[-1,1],[1,1]].forEach(([dc,dd])=>{const r=row+dir*dd,c=col+dc;
+      if(ib(r,c)&&board[r][c]&&board[r][c].team!==team)a.push({r,c});});break;}
+    case'knight':{[[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]].forEach(([dr,dc])=>{
+      const r=row+dr,c=col+dc;if(ib(r,c)&&board[r][c]&&board[r][c].team!==team)a.push({r,c});});break;}
+    case'rook':addLA(a,u,[[0,1],[0,-1],[1,0],[-1,0]]);break;
+    case'bishop':addLA(a,u,[[1,1],[1,-1],[-1,1],[-1,-1]]);break;
+    case'queen':addLA(a,u,[[0,1],[0,-1],[1,0],[-1,0],[1,1],[1,-1],[-1,1],[-1,-1]]);break;
+    case'king':{for(let dr=-1;dr<=1;dr++)for(let dc=-1;dc<=1;dc++){if(!dr&&!dc)continue;
+      const r=row+dr,c=col+dc;if(ib(r,c)&&board[r][c]&&board[r][c].team!==team)a.push({r,c});}break;}
+  }return a;
+}
+
+// 대형 유닛: 행마법에 따라 방향 결정, 2x2 전체가 슬라이드
+function getLargeDirs(u) {
+  const mt=u.moveType;
+  switch(mt) {
+    case 'rook': return [[0,1],[0,-1],[1,0],[-1,0]];
+    case 'bishop': return [[1,1],[1,-1],[-1,1],[-1,-1]];
+    case 'queen': return [[0,1],[0,-1],[1,0],[-1,0],[1,1],[1,-1],[-1,1],[-1,-1]];
+    case 'king': return [[0,1],[0,-1],[1,0],[-1,0],[1,1],[1,-1],[-1,1],[-1,-1]];
+    default: return [[0,1],[0,-1],[1,0],[-1,0]];
+  }
+}
+function isLargeKing(u) { return u.moveType==='king'; }
+
+function getMovesLarge(u) {
+  const m=[],s=u.size,dirs=getLargeDirs(u),oneStep=isLargeKing(u);
+  dirs.forEach(([dr,dc])=>{
+    let nr=u.row+dr,nc=u.col+dc;
+    while(true) {
+      let ok=true;
+      for(let i=0;i<s&&ok;i++) for(let j=0;j<s&&ok;j++) {
+        const r=nr+i,c=nc+j;
+        if(!ib(r,c)){ok=false;} else if(board[r][c]&&board[r][c]!==u){ok=false;}
+      }
+      if(!ok) break;
+      m.push({r:nr,c:nc});
+      if(oneStep) break;
+      nr+=dr; nc+=dc;
+    }
+  });
+  return m;
+}
+
+function getAttacksLarge(u) {
+  const a=[],s=u.size,dirs=getLargeDirs(u),oneStep=isLargeKing(u);
+  dirs.forEach(([dr,dc])=>{
+    let nr=u.row+dr,nc=u.col+dc;
+    while(true) {
+      // 경계 체크: 2x2 전체가 보드 안인지
+      let outOfBounds=false;
+      for(let i=0;i<s&&!outOfBounds;i++) for(let j=0;j<s&&!outOfBounds;j++) {
+        if(!ib(nr+i,nc+j)) outOfBounds=true;
+      }
+      if(outOfBounds) break;
+
+      // 새 영역에서 적/아군 체크
+      let hasEnemy=false, hasAlly=false;
+      const enemies=[];
+      for(let i=0;i<s;i++) for(let j=0;j<s;j++) {
+        const r=nr+i,c=nc+j,t=board[r][c];
+        if(t&&t!==u) {
+          if(t.team!==u.team){hasEnemy=true;if(!enemies.some(e=>e.r===r&&e.c===c))enemies.push({r,c});}
+          else hasAlly=true;
+        }
+      }
+      if(hasAlly) break; // 아군에 막힘
+      if(hasEnemy) { enemies.forEach(e=>{if(!a.some(x=>x.r===e.r&&x.c===e.c))a.push(e);}); break; }
+      // 빈 칸 — 이동 가능, 계속 슬라이드
+      if(oneStep) break;
+      nr+=dr; nc+=dc;
+    }
+  });
+  return a;
+}
+
+function getCustomMoves(u,fa){const res=[],m=u.moveType,dir=(m.forward!==false)?(u.team==='player'?1:-1):1;
+  const sl=fa?(m.attackSteps||m.steps||[]):(m.steps||[]);
+  sl.forEach(([dr,dc])=>{const r=u.row+dr*dir,c=u.col+dc;if(!ib(r,c))return;
+    if(fa){if(board[r][c]&&board[r][c].team!==u.team)res.push({r,c});}else{if(!board[r][c])res.push({r,c});}});
+  const sld=fa?(m.attackSlides||m.slides||[]):(m.slides||[]);
+  if(fa)addLA(res,u,sld.map(([dr,dc])=>[dr*dir,dc]));else addLM(res,u,sld.map(([dr,dc])=>[dr*dir,dc]));return res;}
+
+function addLM(m,u,dirs){dirs.forEach(([dr,dc])=>{let r=u.row+dr,c=u.col+dc;while(ib(r,c)){if(board[r][c])break;m.push({r,c});r+=dr;c+=dc;}});}
+function addLA(a,u,dirs){dirs.forEach(([dr,dc])=>{let r=u.row+dr,c=u.col+dc;while(ib(r,c)){if(board[r][c]){if(board[r][c].team!==u.team)a.push({r,c});break;}r+=dr;c+=dc;}});}
+function ib(r,c){return r>=0&&r<BS&&c>=0&&c<BS;}
+function pos(r,c){return COLS[c]+(r+1);}
+
+// ── 행동 ──
+function doMove(u,r,c){const f=pos(u.row,u.col);removeFromBoard(u);u.row=r;u.col=c;placeOnBoard(u);
+  addLog(u.team==='player'?'player-action':'enemy-action',`${u.name} ${f} → ${pos(r,c)} 이동`);}
+
+function doAttack(att,tr,tc){
+  const tgt=board[tr][tc];if(!tgt||tgt===att)return;
+  const oR=att.row,oC=att.col;
+  tgt.hp-=att.atk;showDmgPopup(tr,tc,att.atk,false);
+  if(tgt.hp<=0){
+    tgt.hp=0;tgt.alive=false;removeFromBoard(tgt);
+    addLog('kill',`${att.name}(${pos(oR,oC)}) → ${tgt.name}(${pos(tr,tc)}) 💀 처치!`);flashCell(tr,tc);
+    if(att.size===1){removeFromBoard(att);att.row=tr;att.col=tc;placeOnBoard(att);}
+    else{
+      // 2x2: 타겟 방향으로 슬라이드하여 타겟이 풋프린트 안에 오도록 이동
+      const s=att.size;
+      // 방향 판정: 타겟이 유닛 풋프린트의 어느 방향에 있는지
+      let dr=0, dc=0;
+      if(tr >= att.row+s) dr=1;       // 타겟이 위쪽
+      else if(tr < att.row) dr=-1;    // 타겟이 아래쪽
+      if(tc >= att.col+s) dc=1;       // 타겟이 오른쪽
+      else if(tc < att.col) dc=-1;    // 타겟이 왼쪽
+
+      if(dr||dc) {
+        removeFromBoard(att);
+        // 타겟이 풋프린트 안에 들어올 때까지 슬라이드
+        let safety=20;
+        while(safety-->0) {
+          const inside = tr>=att.row && tr<att.row+s && tc>=att.col && tc<att.col+s;
+          if(inside) break;
+          att.row+=dr; att.col+=dc;
+        }
+        // 짓밟기: 이동 방향 앞쪽 2x2 영역에 1 데미지
+        if(att.onKill==='crush'){
+          // 이동 방향 앞쪽 2x2 시작점 계산
+          let cr0, cc0;
+          if(dr===1)      cr0 = att.row + s;       // 위로 이동 → 윗쪽 2칸
+          else if(dr===-1) cr0 = att.row - s;       // 아래로 이동 → 아랫쪽 2칸
+          else             cr0 = att.row;            // 세로 이동 없음
+
+          if(dc===1)      cc0 = att.col + s;        // 오른쪽 이동 → 오른쪽 2칸
+          else if(dc===-1) cc0 = att.col - s;        // 왼쪽 이동 → 왼쪽 2칸
+          else             cc0 = att.col;             // 가로 이동 없음
+
+          for(let i=0;i<s;i++) for(let j=0;j<s;j++){
+            const cr=cr0+i, cc=cc0+j;
+            if(!ib(cr,cc)) continue;
+            const v=board[cr][cc];
+            if(v&&v!==att&&v.alive){
+              v.hp-=1;showDmgPopup(cr,cc,1,true);
+              addLog('kill',`⚡ 짓밟기! ${v.name}(${pos(cr,cc)}) -1 (HP:${Math.max(0,v.hp)})`);
+              if(v.hp<=0){v.hp=0;v.alive=false;removeFromBoard(v);
+                addLog('kill',`💀 ${v.name} 짓밟혀 처치!`);flashCell(cr,cc);}
+            }
+          }
+        }        placeOnBoard(att);
+      }}
+    if(att.onKill==='spawnHereticPawn'&&att.size===1&&!board[oR][oC]){
+      const p=makeUnit('HERETIC_PAWN',att.team,oR,oC);units.push(p);placeOnBoard(p);
+      addLog('merge',`✨ 이교도 폰 소환! (${pos(oR,oC)})`);buildTurnQueue();}
+    checkMerge(att.team);
+  }else{addLog(att.team==='player'?'player-action':'enemy-action',
+    `${att.name}(${pos(oR,oC)}) → ${tgt.name}(${pos(tr,tc)}) ${att.atk} dmg (HP:${tgt.hp}/${tgt.maxHp})`);}
+}
+
+// ── 합체 ──
+function checkMerge(team){
+  for(const rule of MERGE_RULES){const st=rule.sources[0],cnt=rule.sources.length,s=Math.sqrt(cnt);
+    if(s!==Math.floor(s))continue;const si=Math.floor(s);
+    for(let r=0;r<=BS-si;r++)for(let c=0;c<=BS-si;c++){let ok=true;const found=[];
+      for(let i=0;i<si&&ok;i++)for(let j=0;j<si&&ok;j++){const u=board[r+i][c+j];
+        if(!u||u.type!==st||u.team!==team||!u.alive)ok=false;else found.push(u);}
+      if(!ok||found.length!==cnt)continue;
+      found.forEach(u=>{u.alive=false;removeFromBoard(u);});
+      const big=makeUnit(rule.result,team,r,c);units.push(big);placeOnBoard(big);
+      addLog('merge',`🔥 ${TYPES[st].name} ${cnt}체 합체! ${TYPES[rule.result].name} 소환!`);
+      for(let i=0;i<si;i++)for(let j=0;j<si;j++)flashCell(r+i,c+j);buildTurnQueue();return true;}}
+  return false;
+}
+
+// ── AI ──
+function aiTurn(u){
+  const atks=getValidAttacks(u),mvs=getValidMoves(u);
+  const kk=atks.find(a=>{const t=board[a.r][a.c];return t&&t.type==='KING'&&t.hp<=u.atk;});
+  if(kk){doAttack(u,kk.r,kk.c);render();setTimeout(nextTurn,400);return;}
+  const kill=atks.filter(a=>{const t=board[a.r][a.c];return t&&t.hp<=u.atk;}).sort((a,b)=>board[b.r][b.c].value-board[a.r][a.c].value);
+  if(kill.length){doAttack(u,kill[0].r,kill[0].c);render();setTimeout(nextTurn,400);return;}
+  if(atks.length){const s=[...atks].sort((a,b)=>board[a.r][a.c].hp-board[b.r][b.c].hp);
+    doAttack(u,s[0].r,s[0].c);render();setTimeout(nextTurn,400);return;}
+  if(mvs.length){const pu=units.filter(x=>x.team==='player'&&x.alive);
+    if(pu.length){let best=mvs[0],bd=Infinity;mvs.forEach(m=>{pu.forEach(p=>{
+      const d=Math.abs(m.r-p.row)+Math.abs(m.c-p.col);if(d<bd){bd=d;best=m;}});});doMove(u,best.r,best.c);}
+    render();setTimeout(nextTurn,400);return;}
+  addLog('enemy-action',`${u.name} 패스`);render();setTimeout(nextTurn,400);
+}
+
+// ── 대형 유닛 하이라이트 확장 ──
+// 이동/공격 앵커 좌표를 2x2 풋프린트로 확장하여 렌더링
+function expandHighlights(u, anchors) {
+  if(u.size<=1) return anchors;
+  const expanded=[];
+  anchors.forEach(a=>{
+    for(let i=0;i<u.size;i++) for(let j=0;j<u.size;j++){
+      const r=a.r+i,c=a.c+j;
+      if(ib(r,c)&&!expanded.some(e=>e.r===r&&e.c===c)) expanded.push({r,c,anchor:a});
+    }
+  });
+  return expanded;
+}
+// 클릭된 셀에서 앵커 좌표 역추적
+function findAnchor(expandedList,r,c) {
+  const hit=expandedList.find(e=>e.r===r&&e.c===c);
+  return hit&&hit.anchor?hit.anchor:hit;
+}
+
+// ── 플레이어 입력 ──
+function onCellClick(r,c){
+  if(phase==='gameOver')return;
+  if(phase==='playerSelect'){const u=currentUnit();
+    if(board[r][c]===u){selUnit=u;
+      const rawM=getValidMoves(u),rawA=getValidAttacks(u);
+      highlights={moves:expandHighlights(u,rawM),attacks:rawA,rawMoves:rawM,rawAttacks:rawA};
+      phase='playerAction';setStatus(`🔵 ${u.name} 선택됨`);render();}
+    else setStatus(`🔵 ${u.name}의 차례 — 해당 유닛 클릭`);}
+  else if(phase==='playerAction'){const u=selUnit;
+    const isM=highlights.moves.some(m=>m.r===r&&m.c===c);
+    const isA=highlights.attacks.some(a=>a.r===r&&a.c===c);
+    if(isA){doAttack(u,r,c);selUnit=null;highlights={moves:[],attacks:[]};showPassBtn(false);render();setTimeout(nextTurn,300);}
+    else if(isM){const anc=findAnchor(highlights.moves,r,c);
+      doMove(u,anc.r,anc.c);selUnit=null;highlights={moves:[],attacks:[]};showPassBtn(false);checkMerge(u.team);render();setTimeout(nextTurn,300);}
+    else if(board[r][c]===u){selUnit=null;highlights={moves:[],attacks:[]};phase='playerSelect';setStatus(`🔵 ${u.name}의 차례`);render();}
+    else{selUnit=null;highlights={moves:[],attacks:[]};phase='playerSelect';render();}}
+}
+
+// ── 렌더링 ──
+function render(){
+  const bEl=document.getElementById('board');bEl.innerHTML='';
+  const cu=(turnIdx<turnQueue.length)?turnQueue[turnIdx]:null;
+  const r2=new Set();
+  for(let row=BS-1;row>=0;row--)for(let col=0;col<BS;col++){
+    const cell=document.createElement('div');cell.className='cell '+((row+col)%2===0?'dark':'light');
+    cell.onclick=()=>onCellClick(row,col);
+    if(highlights.moves.some(m=>m.r===row&&m.c===col))cell.classList.add('move-highlight');
+    if(highlights.attacks.some(a=>a.r===row&&a.c===col))cell.classList.add('attack-highlight');
+    const u=board[row][col];
+    if(u&&u.size>1){cell.classList.add(u.team==='player'?'large-player':'large-enemy');
+      if(selUnit===u)cell.classList.add('selected');if(cu===u&&!selUnit)cell.classList.add('current-turn');
+      if(isAnchor(u,row,col)&&!r2.has(u.id)){r2.add(u.id);
+        const ue=document.createElement('div');ue.className=`unit ${u.team}`;
+        const ie=document.createElement('div');ie.className='unit-icon large';ie.textContent=u.icon;
+        const le=document.createElement('div');le.className='unit-label';le.textContent=u.name;
+        const hb=document.createElement('div');hb.className='hp-bar';hb.style.width='46px';
+        const hf=document.createElement('div');hf.className=`hp-fill ${u.team}`;hf.style.width=(u.hp/u.maxHp*100)+'%';
+        hb.appendChild(hf);ue.appendChild(ie);ue.appendChild(le);ue.appendChild(hb);cell.appendChild(ue);}}
+    else if(u&&u.size===1){if(selUnit===u)cell.classList.add('selected');if(cu===u&&!selUnit)cell.classList.add('current-turn');
+      const ue=document.createElement('div');ue.className=`unit ${u.team}`;
+      const ie=document.createElement('div');ie.className='unit-icon';ie.textContent=u.icon;
+      const le=document.createElement('div');le.className='unit-label';le.textContent=u.name;
+      const hb=document.createElement('div');hb.className='hp-bar';
+      const hf=document.createElement('div');hf.className=`hp-fill ${u.team}`;hf.style.width=(u.hp/u.maxHp*100)+'%';
+      hb.appendChild(hf);ue.appendChild(ie);ue.appendChild(le);ue.appendChild(hb);cell.appendChild(ue);}
+    if(col===0){const rc=document.createElement('span');rc.className='coord coord-row';rc.textContent=row+1;cell.appendChild(rc);}
+    if(row===0){const cc=document.createElement('span');cc.className='coord coord-col';cc.textContent=COLS[col];cell.appendChild(cc);}
+    bEl.appendChild(cell);}
+  renderTQ();renderGI();
+}
+
+function renderTQ(){const l=document.getElementById('turnList');l.innerHTML='';
+  turnQueue.forEach((u,i)=>{const it=document.createElement('div');it.className='turn-item';
+    if(i===turnIdx)it.classList.add('active');if(!u.alive)it.classList.add('dead');
+    const sz=u.size>1?` [${u.size}x${u.size}]`:'';
+    it.innerHTML=`<div class="dot ${u.team}"></div><span>${i===turnIdx?'▸ ':''}${u.name}${sz}</span><span class="stats">⚔${u.atk} ♥${u.hp} ⚡${u.spd}</span>`;
+    l.appendChild(it);});}
+
+function renderGI(){
+  const pa=units.filter(u=>u.team==='player'&&u.alive).length;
+  const ea=units.filter(u=>u.team==='enemy'&&u.alive).length;
+  const pk=units.find(u=>u.team==='player'&&u.type==='KING'&&u.alive);
+  const ek=units.find(u=>u.team==='enemy'&&u.type==='DARK_KING'&&u.alive);
+  const col=units.find(u=>u.type==='COLOSSUS'&&u.alive);
+  document.getElementById('gameInfo').innerHTML=
+    `라운드: <span>${round}</span><br>아군: <span>${pa}</span> | 적군: <span>${ea}</span><br>`+
+    `아군 킹: <span>${pk?pk.hp+'/'+pk.maxHp:'💀'}</span><br>적 킹: <span>${ek?ek.hp+'/'+ek.maxHp:'💀'}</span>`+
+    (col?`<br>거신병: <span>${col.hp}/${col.maxHp}</span>`:'');
+}
+
+function setStatus(t){document.getElementById('status').textContent=t;}
+function addLog(cls,text){const el=document.getElementById('log'),d=document.createElement('div');d.className=cls;d.textContent=text;el.appendChild(d);el.scrollTop=el.scrollHeight;}
+function showDmgPopup(r,c,dmg,crush){const bEl=document.getElementById('board'),idx=(BS-1-r)*BS+c,cell=bEl.children[idx];if(!cell)return;
+  const p=document.createElement('div');p.className='dmg-popup'+(crush?' crush':'');p.textContent=crush?`💥-${dmg}`:`-${dmg}`;
+  p.style.cssText='left:50%;top:20%;transform:translateX(-50%)';cell.appendChild(p);setTimeout(()=>p.remove(),800);}
+function flashCell(r,c){const bEl=document.getElementById('board'),idx=(BS-1-r)*BS+c,cell=bEl.children[idx];
+  if(cell){cell.classList.add('kill-flash');setTimeout(()=>cell.classList.remove('kill-flash'),300);}}
+
+initGame();
+</script>
+</body>
+</html>
