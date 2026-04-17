@@ -749,7 +749,12 @@ function onCellClick(r,c){
         render();return;
       }
 
+      const prevR=u.row,prevC=u.col;
       doMove(u,anc.r,anc.c);
+      // 폭격기: 이동 시에도 경로 데미지
+      if(activeArtifacts.BOMBER&&isJumpUnit(u)){
+        doBomberPathOnly(u,prevR,prevC,anc.r,anc.c);
+      }
       selUnit=null;highlights={moves:[],attacks:[]};
       checkPlayerMerge();
       showPassBtn(false);render();endPlayerTurn();
@@ -1100,10 +1105,8 @@ function applyDamage(att,tgt,tr,tc,dmg,oR,oC){
       addLog('merge',`✨ 이교도 폰 소환! (${pos(oR,oC)})`);checkMerge(att.team);
     }
 
-    // 폭격기: 점프 기물 이동 경로상 데미지 (공격 전에 실행)
-    if(activeArtifacts.BOMBER&&att.team==='player'&&isJumpUnit(att)){
-      doBomberAttack(att,tr,tc);
-    }
+    // 킹/아서스 사망 시 즉시 게임오버 체크
+    if(tgt.isKing){if(checkGameOver())return;}
 
     // 공격자 이동 (발리스타는 이동 불가)
     if(att.ballista)return;
@@ -1231,6 +1234,26 @@ function doBomberAttack(att,tr,tc){
 }
 
 function isJumpUnit(u){return u.moveType==='knight'||u.moveType==='unicorn'||u.moveType==='knight_pawn';}
+
+// 폭격기 이동 시 경로 데미지만 (목적지 공격 없음, 이동 후 호출)
+function doBomberPathOnly(u,fromR,fromC,toR,toC){
+  const pathCells=getJumpPathCells(fromR,fromC,toR,toC);
+  const intermediate=pathCells.slice(0,-1);
+  const effAtk=getEffectiveAtk(u);
+  intermediate.forEach(({r,c})=>{
+    const t=board[r][c];
+    if(!t||t===u||t.team===u.team)return;
+    if(t.clown)t.clownUntouched=false;
+    t.hp-=effAtk;showDmgPopup(r,c,effAtk,false);
+    if(t.hp<=0){
+      t.hp=0;t.alive=false;removeFromBoard(t);
+      addLog('kill',`💣 ${t.name}(${pos(r,c)}) 경로 처치!`);flashCell(r,c);
+      if(t.team==='enemy')checkOath();
+    }else{
+      addLog('player-action',`💣 ${t.name}(${pos(r,c)}) ${effAtk}dmg`);
+    }
+  });
+}
 
 function triggerSoulSort(){
   const pool=soulSortPool.filter(s=>{
